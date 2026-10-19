@@ -12,6 +12,10 @@ Needs Live 12 with Max 9, and an MPE synth after it with a ±48 semitone bend ra
 
 Download `OpenBend-JI.amxd` from Releases and drop it into your User Library under `Presets/MIDI Effects/Max MIDI Effect/`, then put it in front of the synth.
 
+In Auto, the sustain pedal keeps released notes in the chord. New notes join them, and the tuning follows all notes still sounding. Lift the pedal to release those notes and tune from the keys still held. A manually locked root stays fixed.
+
+Sustain uses MIDI CC64 (64–127 down, 0–63 up). OpenBend holds the notes itself and consumes CC64. Channel 1 controls sustain for all notes; other channels control notes played on that input channel.
+
 ## Build
 
 `build_amxd.py` (Python 3.12+) writes the device into your User Library. `test_engine.js` tests the engine without Live.

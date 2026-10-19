@@ -24,6 +24,9 @@ let portaCurve = 0;
 let chordWindowMs = 0;  // how long to gather a strummed chord before tuning it
 
 const active = new Array(128).fill(false);
+const keyDown = new Array(128).fill(false);
+const releaseVelocity = new Array(128).fill(0);
+const sustainDown = new Array(17).fill(false);
 const noteChannel = new Array(128).fill(0);
 const noteInChannel = new Array(128).fill(0);
 const current = new Float64Array(128);
@@ -286,7 +289,9 @@ function retarget() {
 // With a chord window, note-ons wait until the window closes so the whole
 // strum is tuned on one root; without one they start at once.
 function noteOn(inChannel, note, velocity) {
-    if (active[note]) noteOff(inChannel, note, 0);
+    if (active[note]) {
+        releaseNote(note, 0);
+    }
     if (chordWindowMs > 0) {
         pending = pending.filter(p => p.note !== note);
         pending.push({ inChannel, note, velocity });
@@ -305,7 +310,10 @@ function flushPending() {
 }
 
 function startNotes(notes) {
-    for (const { note } of notes) active[note] = true;
+    for (const { note } of notes) {
+        active[note] = true;
+        keyDown[note] = true;
+    }
     updateRoot();
     for (const { inChannel, note, velocity } of notes) {
         const bend = jiBend(note);
@@ -326,12 +334,38 @@ function startNotes(notes) {
 function noteOff(inChannel, note, velocity) {
     if (pending.some(p => p.note === note)) flushPending();
     if (!active[note]) return;
+    keyDown[note] = false;
+    releaseVelocity[note] = velocity;
+    if (isSustained(note)) {
+        return;
+    }
+    releaseNote(note, velocity);
+    updateRoot();
+    retarget();
+    display();
+}
+
+function releaseNote(note, velocity) {
     active[note] = false;
+    keyDown[note] = false;
     send([0x80 | (noteChannel[note] - 1), note, velocity]);
     noteChannel[note] = 0;
     target[note] = current[note] = start[note] = 0;
     phase[note] = 1;
     lastSent[note] = -1;
+}
+
+function isSustained(note) {
+    return sustainDown[1] || sustainDown[noteInChannel[note]];
+}
+
+// Keep pedal-held notes in the chord and reserve their channels until release.
+function releaseUnsustained() {
+    for (let n = 0; n < 128; n++) {
+        if (active[n] && !keyDown[n] && !isSustained(n)) {
+            releaseNote(n, releaseVelocity[n]);
+        }
+    }
     updateRoot();
     retarget();
     display();
@@ -340,6 +374,7 @@ function noteOff(inChannel, note, velocity) {
 function allOff() {
     pending = [];
     gather.cancel();
+    sustainDown.fill(false);
     for (let n = 0; n < 128; n++) if (active[n]) noteOff(0, n, 0);
 }
 
@@ -374,6 +409,22 @@ function handle(s, d) {
     const inChannel = (s & 0x0f) + 1;
     if (kind === 0x90 && d[1] > 0) return noteOn(inChannel, d[0], d[1]);
     if (kind === 0x80 || kind === 0x90) return noteOff(inChannel, d[0], d[1]);
+    if (kind === 0xb0 && d[0] === 64) {
+        sustainDown[inChannel] = d[1] >= 64;
+        if (!sustainDown[inChannel]) {
+            releaseUnsustained();
+        }
+        // Sustain is handled here so the synth releases notes when the engine does.
+        return;
+    }
+    if (kind === 0xb0 && d[0] === 121) {
+        if (inChannel === 1) {
+            sustainDown.fill(false);
+        } else {
+            sustainDown[inChannel] = false;
+        }
+        releaseUnsustained();
+    }
     if (kind === 0xa0) {
         if (active[d[0]]) send([0xa0 | (noteChannel[d[0]] - 1), d[0], d[1]]);
         return;

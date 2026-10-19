@@ -204,3 +204,122 @@ test("the curve graph redraws with the chosen shape; Bend Range reports its step
     e.api.range(2);
     assert.strictEqual(e.shown().steptext.set, "1 step = 0.02 c");
 });
+
+test("sustain keeps the chord sounding and tuned after every key is released", () => {
+    const e = engine();
+    e.play([0x90, 60, 100, 64, 100, 67, 100]);
+    e.midi();
+    e.play([0xb0, 64, 127, 0x80, 60, 12, 64, 34, 67, 56]);
+    assert.deepStrictEqual(e.midi(), []);
+    assert.strictEqual(e.shown().scale.set, "C   ·   auto root C");
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 60, 12], [0x82, 64, 34], [0x83, 67, 56]]);
+    assert.strictEqual(e.shown().scale.set, "last: C   ·   auto root C");
+});
+
+test("Auto detects from sustained and new notes, then from keys still down on pedal release", () => {
+    const e = engine();
+    e.play([0x90, 60, 100, 64, 100, 0xb0, 64, 127, 0x80, 60, 0, 64, 0]);
+    e.midi();
+    e.play([0x90, 57, 100]);
+    assert.deepStrictEqual(e.bends(), [[4, 0], [2, 27], [3, 3]]);
+    assert.strictEqual(e.shown().scale.set, "Am   ·   auto root A");
+    e.midi();
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 60, 0], [0x82, 64, 0]]);
+    assert.strictEqual(e.shown().scale.set, "A   ·   auto root A");
+    e.play([0x80, 57, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x83, 57, 0]]);
+});
+
+test("pedal release retunes remaining keys once, after removing sustained notes", () => {
+    const e = engine();
+    e.play([0x90, 57, 100, 60, 100, 64, 100, 0xb0, 64, 127, 0x80, 57, 0]);
+    e.midi();
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 57, 0], [0xe2, 0, 64], [0xe3, 105, 63]]);
+    assert.strictEqual(e.shown().scale.set, "C + E (M3)   ·   auto root C");
+});
+
+test("CC64 uses the 64 threshold and zero-velocity note-ons release keys", () => {
+    const e = engine();
+    e.play([0xb0, 64, 63, 0x90, 60, 100, 60, 0]);
+    assert.ok(e.midi().some(m => m[0] === 0x81));
+    e.play([0xb0, 64, 64, 0x90, 64, 100]);
+    e.midi();
+    e.play([0x90, 64, 0, 0xb0, 64, 100]);
+    assert.deepStrictEqual(e.midi(), []);
+    e.play([0xb0, 64, 63]);
+    assert.deepStrictEqual(e.midi(), [[0x82, 64, 0]]);
+});
+
+test("retriggering a sustained pitch ends its old voice and keeps the new key held", () => {
+    const e = engine();
+    e.play([0xb0, 64, 127, 0x90, 60, 100, 0x80, 60, 0]);
+    e.midi();
+    e.play([0x90, 60, 90]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 60, 0], [0xe2, 0, 64], [0x92, 60, 90]]);
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), []);
+    e.play([0x80, 60, 45]);
+    assert.deepStrictEqual(e.midi(), [[0x82, 60, 45]]);
+});
+
+test("pedal works before notes arrive and for a key released inside the chord window", () => {
+    const e = engine();
+    e.api.chordwindow(30);
+    e.play([0xb0, 64, 127, 0x90, 64, 100, 67, 100, 72, 100, 0x80, 64, 0]);
+    assert.deepStrictEqual(e.bends(), [[2, -23], [3, 3], [4, 0]]);
+    assert.ok(e.midi().every(m => (m[0] & 0xf0) === 0x90));
+    e.play([0x80, 67, 0, 72, 0, 0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 64, 0], [0x82, 67, 0], [0x83, 72, 0]]);
+});
+
+test("member pedals sustain only their input channel; master sustain overlaps them", () => {
+    const e = engine();
+    e.play([0xb1, 64, 127, 0x91, 60, 100, 0x92, 64, 100]);
+    e.midi();
+    e.play([0x81, 60, 0, 0x82, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x82, 64, 0]]);
+    e.play([0xb0, 64, 127, 0xb1, 64, 0]);
+    assert.deepStrictEqual(e.midi(), []);
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 60, 0]]);
+});
+
+test("sustain leaves a manually locked root fixed", () => {
+    const e = engine();
+    e.api.lock(1);
+    e.play([0xb0, 64, 127, 0x90, 64, 100, 0x80, 64, 0]);
+    e.midi();
+    e.play([0x90, 57, 100]);
+    assert.deepStrictEqual(e.bends(), [[3, -27]]);
+    assert.match(e.shown().scale.set, /locked to C$/);
+    e.play([0xb0, 64, 0]);
+    assert.deepStrictEqual(e.bends(), []);
+    assert.match(e.shown().scale.set, /locked to C$/);
+});
+
+test("panic clears pedal-held notes and sustain state", () => {
+    for (const cc of [120, 123]) {
+        const e = engine();
+        e.play([0xb0, 64, 127, 0x90, 60, 100, 0x80, 60, 0]);
+        e.midi();
+        e.play([0xb0, cc, 0]);
+        assert.deepStrictEqual(e.midi(), [[0x81, 60, 0], [0xb0, cc, 0]]);
+        e.play([0x90, 64, 100]);
+        e.midi();
+        e.play([0x80, 64, 0]);
+        assert.deepStrictEqual(e.midi(), [[0x82, 64, 0]]);
+    }
+});
+
+test("reset controllers releases pedal-held notes but keeps keys still down", () => {
+    const e = engine();
+    e.play([0xb0, 64, 127, 0x90, 60, 100, 72, 100, 0x80, 60, 0]);
+    e.midi();
+    e.play([0xb0, 121, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x81, 60, 0], [0xb0, 121, 0]]);
+    e.play([0x80, 72, 0]);
+    assert.deepStrictEqual(e.midi(), [[0x82, 72, 0]]);
+});

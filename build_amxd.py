@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip()
 DEFAULT_OUT = Path.home() / "Music/Ableton/User Library/Presets/MIDI Effects/Max MIDI Effect/OpenBend-JI.amxd"
 
 NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
@@ -198,9 +199,9 @@ def patcher(p: Patch) -> Json:
             "default_fontname": "Arial Bold",
             "gridsize": [8.0, 8.0],
             "devicewidth": 424.0,
-            "description": "Adaptive 5-limit just intonation: retunes each held note to pure ratios above the chord "
+            "description": f"OpenBend JI {VERSION}. Adaptive 5-limit just intonation: retunes each held note to pure ratios above the chord "
                            "root, via MPE.",
-            "title": "OpenBend JI",
+            "title": f"OpenBend JI {VERSION}",
             "boxes": p.boxes,
             "lines": p.lines,
             "dependency_cache": [],
